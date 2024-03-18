@@ -44,7 +44,7 @@ func main() {
 		}
 	}()
 
-	partitionConsumer, err := consumer.ConsumePartition(topics, 0, sarama.OffsetNewest)
+	partitionConsumer, err := consumer.ConsumePartition(topics, 0, sarama.OffsetOldest)
 	if err != nil {
 		panic(err)
 	}
@@ -64,7 +64,7 @@ ConsumerLoop:
 	for {
 		select {
 		case msg := <-partitionConsumer.Messages():
-			log.Printf("Consumed message offset %d\n", msg.Offset)
+			log.Printf("Consumed message offset %d message %s\n", msg.Offset, msg.Value)
 			consumed++
 		case <-signals:
 			break ConsumerLoop

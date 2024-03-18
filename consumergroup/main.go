@@ -2,6 +2,8 @@ package main
 
 // SIGUSR1 toggle the pause/resume consumption
 import (
+	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -41,6 +43,7 @@ func main() {
 	if oldest {
 		config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	}
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
 
 	group, err := sarama.NewConsumerGroup(strings.Split(brokers, ","), groupID, config)
 	if err != nil {
@@ -52,4 +55,37 @@ func main() {
 			log.Fatalln(err)
 		}
 	}()
+
+	ctx := context.Background()
+	for {
+		topics := strings.Split(topics, ",")
+		handler := exampleConsumerGroupHandler{}
+
+		// `Consume` should be called inside an infinite loop, when a
+		// server-side rebalance happens, the consumer session will need to be
+		// recreated to get the new claims
+		err := group.Consume(ctx, topics, handler)
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+type exampleConsumerGroupHandler struct{}
+
+func (exampleConsumerGroupHandler) Setup(_ sarama.ConsumerGroupSession) error   { return nil }
+func (exampleConsumerGroupHandler) Cleanup(_ sarama.ConsumerGroupSession) error { return nil }
+func (h exampleConsumerGroupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+consume:
+	for {
+		select {
+		case msg := <-claim.Messages():
+			fmt.Printf("Message topic:%q partition:%d offset:%d message:%s\n", msg.Topic, msg.Partition, msg.Offset, msg.Value)
+			sess.MarkMessage(msg, "")
+		case <-sess.Context().Done():
+			fmt.Println("rebalance")
+			break consume
+		}
+	}
+	return sess.Context().Err()
 }

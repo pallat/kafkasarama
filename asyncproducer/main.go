@@ -2,7 +2,9 @@ package main
 
 // SIGUSR1 toggle the pause/resume consumption
 import (
+	"log"
 	"os"
+	"strings"
 
 	_ "net/http/pprof"
 
@@ -33,5 +35,27 @@ func init() {
 }
 
 func main() {
+	producer, err := sarama.NewAsyncProducer(strings.Split(brokers, ","), nil)
+	if err != nil {
+		panic(err)
+	}
 
+	defer func() {
+		if err := producer.Close(); err != nil {
+			log.Fatalln(err)
+		}
+	}()
+
+	var enqueued, producerErrors int
+	for range 5 {
+		select {
+		case producer.Input() <- &sarama.ProducerMessage{Topic: topic, Key: nil, Value: sarama.StringEncoder("testing 123")}:
+			enqueued++
+		case err := <-producer.Errors():
+			log.Println("Failed to produce message", err)
+			producerErrors++
+		}
+	}
+
+	log.Printf("Enqueued: %d; errors: %d\n", enqueued, producerErrors)
 }
