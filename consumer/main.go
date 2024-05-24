@@ -64,7 +64,7 @@ ConsumerLoop:
 	for {
 		select {
 		case msg := <-partitionConsumer.Messages():
-			log.Printf("Consumed message offset %d\n", msg.Offset)
+			log.Printf("Consumed message offset %d message %q\n", msg.Offset, msg.Value)
 			consumed++
 		case <-signals:
 			break ConsumerLoop
