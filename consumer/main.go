@@ -44,7 +44,7 @@ func main() {
 		}
 	}()
 
-	partitionConsumer, err := consumer.ConsumePartition(topics, 0, sarama.OffsetNewest)
+	partitionConsumer, err := consumer.ConsumePartition(topics, 0, sarama.OffsetOldest)
 	if err != nil {
 		panic(err)
 	}
