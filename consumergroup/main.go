@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -24,6 +25,7 @@ var (
 	topics  = os.Getenv("TOPICS")
 	verbose = false
 	oldest  = false
+	port    = os.Getenv("PORT")
 )
 
 func init() {
@@ -36,17 +38,51 @@ func init() {
 	if len(group) == 0 {
 		panic("no Kafka consumer group defined, please set the -group flag")
 	}
+	if len(port) == 0 {
+		port = "8080"
+	}
 }
 
 func main() {
+	consumer := register.NewConsumer()
+
+	go func() {
+		http.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("live"))
+		})
+
+		http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-consumer.Ready():
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("ready"))
+			default:
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("not ready"))
+			}
+		})
+
+		// For backward compatibility
+		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ok"))
+		})
+
+		slog.Info("Health check server listening on port " + port)
+		if err := http.ListenAndServe(":"+port, nil); err != nil {
+			slog.Error("Health check server failed: " + err.Error())
+		}
+	}()
+
 	config := sarama.NewConfig()
 	if oldest {
 		config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	}
 	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
-	consumer := register.NewConsumer()
 
 	client, err := sarama.NewConsumerGroup(strings.Split(brokers, ","), group, config)
+
 	if err != nil {
 		log.Panicf("new client: %v", err)
 	}
