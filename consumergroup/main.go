@@ -46,10 +46,48 @@ func init() {
 func main() {
 	consumer := register.NewConsumer()
 
+	config := sarama.NewConfig()
+	if oldest {
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	}
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
+
+	client, err := sarama.NewClient(strings.Split(brokers, ","), config)
+	if err != nil {
+		log.Panicf("new client: %v", err)
+	}
+	defer func() {
+		if err = client.Close(); err != nil {
+			log.Panicf("closing client: %v", err)
+		}
+	}()
+
+	groupClient, err := sarama.NewConsumerGroupFromClient(group, client)
+	if err != nil {
+		log.Panicf("new consumer group: %v", err)
+	}
+	defer func() {
+		if err = groupClient.Close(); err != nil {
+			log.Panicf("closing consumer group: %v", err)
+		}
+	}()
+
 	go func() {
 		http.HandleFunc("/livez", func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte("live"))
+			// Now we can use the client to check partitions
+			partitions, err := client.Partitions(strings.Split(topics, ",")[0])
+			if err != nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte("can not connect"))
+				return
+			}
+			if len(partitions) > 0 {
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte("live"))
+				return
+			}
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte("not live"))
 		})
 
 		http.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -75,30 +113,13 @@ func main() {
 		}
 	}()
 
-	config := sarama.NewConfig()
-	if oldest {
-		config.Consumer.Offsets.Initial = sarama.OffsetOldest
-	}
-	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
-
-	client, err := sarama.NewConsumerGroup(strings.Split(brokers, ","), group, config)
-
-	if err != nil {
-		log.Panicf("new client: %v", err)
-	}
-	defer func() {
-		if err = client.Close(); err != nil {
-			log.Panicf("closing client: %v", err)
-		}
-	}()
-
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	ctx, gracefully := context.WithCancel(context.Background())
 	go func() {
 		defer wg.Done()
 		for {
-			if err := client.Consume(ctx, strings.Split(topics, ","), consumer); err != nil {
+			if err := groupClient.Consume(ctx, strings.Split(topics, ","), consumer); err != nil {
 				if errors.Is(err, sarama.ErrClosedConsumerGroup) {
 					return
 				}
@@ -137,7 +158,4 @@ keepRunning:
 	}
 	gracefully()
 	wg.Wait() // waiting for gracefully consumer stopping
-	if err = client.Close(); err != nil {
-		log.Panicf("closing client: %v", err)
-	}
 }
