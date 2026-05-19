@@ -1,0 +1,11 @@
+.git
+.vscode
+.omg
+.env
+*.log
+vendor/
+node_modules/
+dist/
+tmp/
+*.test
+*.out
